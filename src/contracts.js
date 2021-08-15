@@ -1,6 +1,7 @@
+const generateClass = require('eth-contract-class').default;
 const GivethBridgeArtifact = require('../build/GivethBridge.json');
 const ForeignGivethBridgeArtifact = require('../build/ForeignGivethBridge.json');
-const generateClass = require('eth-contract-class').default;
+const CSTokenRegistryArtifact = require('../build/Registry.json');
 
 module.exports = {
     GivethBridge: generateClass(
@@ -10,5 +11,9 @@ module.exports = {
     ForeignGivethBridge: generateClass(
         ForeignGivethBridgeArtifact.compilerOutput.abi,
         `0x${ForeignGivethBridgeArtifact.compilerOutput.evm.bytecode.object}`,
+    ),
+    CSTokenRegistry: generateClass(
+        CSTokenRegistryArtifact.compilerOutput.abi,
+        `0x${CSTokenRegistryArtifact.compilerOutput.evm.bytecode.object}`,
     ),
 };

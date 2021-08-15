@@ -1,16 +1,10 @@
 import logger from 'winston';
-import { LiquidPledging } from 'giveth-liquidpledging';
-import { ForeignGivethBridge, GivethBridge } from './contracts';
-
-const fetch = require('node-fetch');
+import { GivethBridge } from './contracts';
 
 export default class {
-    constructor(homeWeb3, foreignWeb3, address, foreignAddress, feathersDappConnection) {
+    constructor(homeWeb3, foreignWeb3, address) {
         this.web3 = homeWeb3;
         this.bridge = new GivethBridge(homeWeb3, address);
-        this.foreignBridge = new ForeignGivethBridge(foreignWeb3, foreignAddress);
-        this.lp = new LiquidPledging(foreignWeb3).$contract;
-        this.feathersDappConnection = feathersDappConnection;
     }
 
     getRelayTransactions(fromBlock, toBlock) {
@@ -27,70 +21,42 @@ export default class {
             .then(results => results.filter(r => r !== undefined));
     }
 
-    getToken(mainToken) {
-        return this.foreignBridge.tokenMapping(mainToken);
-    }
-
-    async fetchGiverId(giver) {
-        let giverId;
-        try {
-            if (this.feathersDappConnection) {
-                const response = await fetch(`${this.feathersDappConnection}/users/${giver}`);
-                if (response.ok) {
-                    const userInfo = await response.json();
-                    if (userInfo.giverId) giverId = String(userInfo.giverId);
-                }
-            }
-        } catch (e) {
-            logger.debug(`Could not fetch user ${giver} from feathers DApp`);
-        }
-
-        return giverId;
-    }
-
-    async eventToTx(event) {
+    eventToTx(event) {
         logger.info('handling GivethBridge event: ', event);
 
-        const { transactionHash, event: eventType, returnValues } = event;
-
-        if (['Donate', 'DonateAndCreateGiver'].includes(eventType)) {
-            const { receiverId, token, amount } = returnValues;
-            const { giver } = returnValues;
-            let { giverId } = returnValues;
-
-            if (eventType === 'DonateAndCreateGiver') {
-                giverId = await this.fetchGiverId(giver);
+        switch (event.event) {
+            case 'Donate': {
+                const { receiverId, token, amount } = event.returnValues;
+                return Promise.all([this.web3.eth.getTransaction(event.transactionHash)]).then(
+                    ([tx]) => {
+                        if (!tx)
+                            throw new Error(`Failed to fetch transaction ${event.transactionHash}`);
+                        return {
+                            homeTx: event.transactionHash,
+                            receiverId,
+                            token,
+                            amount,
+                            sender: tx.from,
+                        };
+                    },
+                );
             }
-
-            return Promise.all([
-                this.web3.eth.getTransaction(transactionHash),
-                this.getToken(token),
-            ]).then(([tx, sideToken]) => {
-                if (!tx) throw new Error(`Failed to fetch transaction ${transactionHash}`);
-                const result = {
-                    homeTx: transactionHash,
-                    receiverId,
-                    mainToken: token,
-                    sideToken,
-                    amount,
-                    sender: tx.from,
-                };
-                if (giverId) {
-                    return Object.assign(result, {
-                        giverId,
-                        data: this.lp.methods
-                            .donate(giverId, receiverId, sideToken, amount)
-                            .encodeABI(),
-                    });
-                }
-                return Object.assign(result, {
-                    giver,
-                    data: this.lp.methods
-                        .addGiverAndDonate(receiverId, giver, sideToken, amount)
-                        .encodeABI(),
+            case 'DonateAndCreateGiver': {
+                const { receiverId, token, amount } = event.returnValues;
+                return this.web3.eth.getTransaction(event.transactionHash).then(tx => {
+                    if (!tx)
+                        throw new Error(`Failed to fetch transaction ${event.transactionHash}`);
+                    return {
+                        homeTx: event.transactionHash,
+                        receiverId,
+                        token,
+                        amount,
+                        sender: tx.from,
+                    };
                 });
-            });
+            }
+            default:
+                return Promise.resolve(undefined);
         }
-        return undefined;
     }
 }
